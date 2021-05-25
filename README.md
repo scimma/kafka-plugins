@@ -33,7 +33,7 @@ To instruct Kafka to use this plugin for authentication lookups configure
 in your server properties configuration file. 
 For example, to use this plugin for the plaintext protocol and the SHA-512 SCRAM mechanism, configure:
 
-	listener.name.sasl_plaintext.scram-sha-512.sasl.server.callback.handler.class=ExternalScramAuthnCallbackHandler
+	listener.name.sasl_plaintext.scram-sha-512.sasl.server.callback.handler.class=scimma.ExternalScramAuthnCallbackHandler
 
 All Kafka configuration settings for this plugin are prefixed by `ExternalScramAuthnCallbackHandler`. 
 They include:
@@ -43,8 +43,26 @@ They include:
 - `ExternalScramAuthnCallbackHandler.postgres.user` - The name of the PostgreSQL username to use. Defaults to 'scimma_user'. 
 - `ExternalScramAuthnCallbackHandler.postgres.password` - The name of the PostgreSQL password to use. This setting has no default, and must always be specified. 
 - `ExternalScramAuthnCallbackHandler.postgres.ssl` - Whether to use SSL transport security when communicating with the database. Currently defaults to false. 
-- `ExternalScramAuthnCallbackHandler.syncPeriod` - The length of time to wait between full synchronizations with the database, in seconds. Defaults to 300 (seconds). 
+- `ExternalScramAuthnCallbackHandler.syncPeriod` - The length of time to wait between full synchronizations with the database, in seconds. Defaults to 300 (seconds).
+
+To configure use of the authorization portion of the plugin, add:
+
+	authorizer.class.name=scimma.ExternalAuthorizer
+
+The settings for the authorizer are analogous to the autheticator:
+
+- `ExternalAuthorizer.postgres.host` - The PostgreSQL server. Defaults to 'localhost'.
+- `ExternalAuthorizer.postgres.database` - The name of the PostgreSQL database to which to connect. Defaults to 'scimma'
+- `ExternalAuthorizer.postgres.user` - The name of the PostgreSQL username to use. Defaults to 'scimma_user'. 
+- `ExternalAuthorizer.postgres.password` - The name of the PostgreSQL password to use. This setting has no default, and must always be specified. 
+- `ExternalAuthorizer.postgres.ssl` - Whether to use SSL transport security when communicating with the database. Currently defaults to false. 
+- `ExternalAuthorizer.syncPeriod` - The length of time to wait between full synchronizations with the database, in seconds. Defaults to 300 (seconds).
+
 
 ## Logging configuration
 
-The logging level used by this plugin is controlled by the `log4j.logger.ExternalScramAuthnCallbackHandler.logger` setting in `log4j.properties`. 
+Logging verbosity can be controlled by setting the following properties in `log4j.properties`:
+
+- `log4j.logger.scimma.ExternalScramAuthnCallbackHandler.logger`  - Logging for authentication
+- `log4j.logger.scimma.ExternalAuthorizer.logger`  - Logging for authorization; at least INFO level is recommended
+- `log4j.logger.scimma.ExternalDataSource.logger`  - Logging for lower level database connection details 

@@ -13,7 +13,14 @@ SLF4J_DOWNLOAD_URL=https://repo1.maven.org/maven2/org/slf4j/slf4j-api/$(SLF4J_VE
 
 DEPENDENCIES=deps/$(POSTGRES_JAR) deps/$(KAFKA_SRC) deps/org.slf4j.jar
 
-BUILD_CLASSPATH=deps/$(SLF4J_JAR):deps/$(KAFKA_SRC)/clients/src/main/java/
+BUILD_CLASSPATH=.:deps/$(SLF4J_JAR):deps/$(KAFKA_SRC)/clients/src/main/java/
+
+JAVAC_FLAGS=-Xlint:deprecation
+#-Xlint:all
+
+
+CLASSES=build/scimma/LockGuard.class build/scimma/ExternalDataSource.class build/scimma/ExternalScramAuthnCallbackHandler.class build/scimma/ExternalAuthorizer.class
+
 
 all : build/ScimmaAuthPlugin.jar
 
@@ -35,11 +42,20 @@ deps/$(KAFKA_SRC)$(KAFKA_TARBALL_SUFFIX) : deps
 deps/org.slf4j.jar : 
 	cd deps && curl -L $(SLF4J_DOWNLOAD_URL) -o $(SLF4J_JAR)
 
-build/ScimmaAuthPlugin.jar : build build/ExternalScramAuthnCallbackHandler.class
-	cd build && jar cf ScimmaAuthPlugin.jar *.class
+build/ScimmaAuthPlugin.jar : build $(CLASSES)
+	cd build && jar cf ScimmaAuthPlugin.jar scimma
 
-build/ExternalScramAuthnCallbackHandler.class : ExternalScramAuthnCallbackHandler.java $(DEPENDENCIES)
-	CLASSPATH=$(BUILD_CLASSPATH) javac ExternalScramAuthnCallbackHandler.java -d build
+build/scimma/LockGuard.class : scimma/LockGuard.java $(DEPENDENCIES)
+	CLASSPATH=$(BUILD_CLASSPATH) javac $(JAVAC_FLAGS) scimma/LockGuard.java -d build
+
+build/scimma/ExternalDataSource.class : scimma/ExternalDataSource.java $(DEPENDENCIES)
+	CLASSPATH=$(BUILD_CLASSPATH) javac $(JAVAC_FLAGS) scimma/ExternalDataSource.java -d build
+
+build/scimma/ExternalScramAuthnCallbackHandler.class : scimma/ExternalScramAuthnCallbackHandler.java $(DEPENDENCIES)
+	CLASSPATH=$(BUILD_CLASSPATH) javac $(JAVAC_FLAGS) scimma/ExternalScramAuthnCallbackHandler.java -d build
+
+build/scimma/ExternalAuthorizer.class : scimma/ExternalAuthorizer.java $(DEPENDENCIES)
+	CLASSPATH=$(BUILD_CLASSPATH) javac $(JAVAC_FLAGS) scimma/ExternalAuthorizer.java -d build
 
 .PHONY : clean clean-deps test
 
