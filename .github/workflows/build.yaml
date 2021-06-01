@@ -10,7 +10,7 @@ jobs:
       with:
         distribution: "adopt-hotspot"
         java-version: "10"
-    - name "Build"
+    - name: "Build"
       id: "build"
       run: "make"
     - name: "Version"
