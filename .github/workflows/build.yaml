@@ -1,0 +1,26 @@
+name: "build"
+on: ["push"]
+jobs:
+  build-and-publish:
+    runs-on: "ubuntu-latest"
+    steps:
+    - uses: "actions/checkout@v2"
+    - name: "Set up java"
+      uses: "actions/setup-java@v2"
+      with:
+        distribution: "adopt-hotspot"
+        java-version: "10"
+    - name "Build"
+      id: "build"
+      run: "make"
+    - name: "Version"
+      id: "version"
+      run: echo "::set-output name=version::$(make version)"
+    - name: "Publish"
+      uses: "ncipollo/release-action@v1"
+      with:
+        name: ${{ steps.version.outputs.version }}
+        tag: ${{ steps.version.outputs.version }}
+        omitBody: true
+        artifacts: "build/ScimmaAuthPlugin.jar"
+        token: ${{ secrets.GITHUB_TOKEN }}

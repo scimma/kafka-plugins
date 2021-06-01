@@ -1,3 +1,5 @@
+PLUGIN_VERSION=0.1.0
+
 KAFKA_VERSION=2.6.2
 KAFKA_SRC=kafka-$(KAFKA_VERSION)-src
 KAFKA_TARBALL_SUFFIX=.tgz
@@ -57,13 +59,16 @@ build/scimma/ExternalScramAuthnCallbackHandler.class : scimma/ExternalScramAuthn
 build/scimma/ExternalAuthorizer.class : scimma/ExternalAuthorizer.java $(DEPENDENCIES)
 	CLASSPATH=$(BUILD_CLASSPATH) javac $(JAVAC_FLAGS) scimma/ExternalAuthorizer.java -d build
 
-.PHONY : clean clean-deps test
+.PHONY : clean clean-deps test version
 
 clean : 
 	rm -rf build
 
 clean-deps :
 	rm -rf deps
+
+version : 
+	@echo "$(PLUGIN_VERSION)"
 
 test : build/ScimmaAuthPlugin.jar deps/$(POSTGRES_JAR)
 	CLASSPATH=$(CLASSPATH):deps/$(POSTGRES_JAR):build java ExternalScramAuthnCallbackHandler
