@@ -171,7 +171,8 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 				result.add(AuthorizationResult.ALLOWED); //super users can always do everything
 				String messageBase="operation "+action.operation().toString()
 					+" on topic "+action.resourcePattern().name()
-					+" by "+requestContext.principal().toString();
+					+" by "+requestContext.principal().toString()
+					+" from "+requestContext.clientAddress().toString();
 				LOG.info("ALLOWED "+messageBase+" due to the principal being on the super-user list");
 			}
 			return result;
@@ -203,7 +204,8 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 	private AuthorizationResult authorizeConsumerGroupOperation(AuthorizableRequestContext requestContext, Action action){
 		String messageBase="operation "+action.operation().toString()
 			+" on consumer group "+action.resourcePattern().name()
-			+" by "+requestContext.principal().toString();
+			+" by "+requestContext.principal().toString()
+			+" from "+requestContext.clientAddress().toString();
 		LOG.debug("ExternalAuthorizer asked to authorize "+messageBase);
 		//extract username
 		String username=requestContext.principal().getName();
@@ -225,7 +227,8 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 	private AuthorizationResult authorizeTopicOperation(AuthorizableRequestContext requestContext, Action action){
 		String messageBase="operation "+action.operation().toString()
 			+" on topic "+action.resourcePattern().name()
-			+" by "+requestContext.principal().toString();
+			+" by "+requestContext.principal().toString()
+			+" from "+requestContext.clientAddress().toString();
 		LOG.debug("ExternalAuthorizer asked to authorize "+messageBase);
 		String topic = action.resourcePattern().name();
 		//if the action is a READ, and the subject is a public topic, we can authorize without needing to examine the principal
@@ -248,7 +251,7 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 			}
 			userPerms=ACLs.get(username);
 			if(userPerms==null){ //if still null there's a database issue, but we can't authorize
-				LOG.info("DENIED "+messageBase+" due to ≈");
+				LOG.info("DENIED "+messageBase+" due to lack of permission data");
 				return AuthorizationResult.DENIED;
 			}
 		}
@@ -264,7 +267,7 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 		}
 		AccessControlEntry entryGeneral = new AccessControlEntry("User:"+username,"*",AclOperation.ALL,AclPermissionType.ALLOW);
 		if(userPerms.contains(new AclBinding(pattern, entryGeneral))){
-			LOG.info("ALLOWED "+messageBase+" due to a match permission with an ALL permission rule");
+			LOG.info("ALLOWED "+messageBase+" due to a match with an ALL permission rule");
 			return AuthorizationResult.ALLOWED;
 		}
 		
@@ -285,7 +288,7 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 			checkPublicTopic(topic);
 			isPublic = publicTopics.get(topic);
 			if(isPublic==null){ //if still null there's a database issue, so fail conservatively
-				LOG.warn("Treating "+topic+"as not publically readable due to topic");
+				LOG.warn("Treating "+topic+" as not publically readable due to lack of information");
 				return false;
 			}
 		}
