@@ -128,7 +128,7 @@ public class ExternalScramAuthnCallbackHandler implements AuthenticateCallbackHa
 		// Return SCRAM credential from credential store
 		LOG.debug("Looking up credential for user "+username);
         if(badUsernames.getOrDefault(username,false)){
-            LOG.debug(username+" is on the blacklist");
+            LOG.info("User "+username+" is on the blacklist");
             return null;
         }
         ScramCredential cred = credentials.get(username);
@@ -137,7 +137,9 @@ public class ExternalScramAuthnCallbackHandler implements AuthenticateCallbackHa
 			cred = credentials.get(username);
 		}
         if(cred==null)
-            LOG.debug("User "+username+" not found");
+            LOG.info("User "+username+" not found");
+        else
+            LOG.info("Found credential for user "+username);
 		return cred;
 	}
     
