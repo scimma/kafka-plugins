@@ -170,7 +170,8 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 			for(Action action : actions){
 				result.add(AuthorizationResult.ALLOWED); //super users can always do everything
 				String messageBase="operation "+action.operation().toString()
-					+" on topic "+action.resourcePattern().name()
+					+" on "+action.resourcePattern().resourceType().toString()
+					+" "+action.resourcePattern().name()
 					+" by "+requestContext.principal().toString()
 					+" from "+requestContext.clientAddress().toString();
 				LOG.info("ALLOWED "+messageBase+" due to the principal being on the super-user list");
@@ -192,7 +193,12 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 				return authorizeTopicOperation(requestContext, action);
 			case GROUP:
 				return authorizeConsumerGroupOperation(requestContext, action);
+			case CLUSTER:
+				return authorizeClusterOperation(requestContext, action);
+			case TRANSACTIONAL_ID:
+				return authorizeTransactionOperation(requestContext, action);
 			default: //No other object types are handled at this time
+				LOG.warn("Rejected request for unsupported resource type: "+action.resourcePattern().resourceType().toString());
 				return AuthorizationResult.DENIED;
 		}
 	}
@@ -236,6 +242,10 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 			LOG.info("ALLOWED "+messageBase+" due to the target being publicly readable");
 			return AuthorizationResult.ALLOWED;
 		}
+		if(topic.equals("__consumer_offsets")){
+			LOG.info("ALLOWED "+messageBase+" by hard-coded rule");
+			return AuthorizationResult.ALLOWED;
+		}
 		
 		String username=requestContext.principal().getName();
 		HashSet<AclBinding> userPerms=ACLs.get(username);
@@ -273,6 +283,24 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 		
 		//otherwise, we must deny
 		LOG.info("DENIED "+messageBase+" due to lack of a matching permission");
+		return AuthorizationResult.DENIED;
+	}
+	
+	private AuthorizationResult authorizeClusterOperation(AuthorizableRequestContext requestContext, Action action){
+		String messageBase="operation "+action.operation().toString()
+			+" on cluster "+action.resourcePattern().name()
+			+" by "+requestContext.principal().toString()
+			+" from "+requestContext.clientAddress().toString();
+		LOG.info("DENIED "+messageBase+" by default");
+		return AuthorizationResult.DENIED;
+	}
+	
+	private AuthorizationResult authorizeTransactionOperation(AuthorizableRequestContext requestContext, Action action){
+		String messageBase="operation "+action.operation().toString()
+			+" on transaction ID "+action.resourcePattern().name()
+			+" by "+requestContext.principal().toString()
+			+" from "+requestContext.clientAddress().toString();
+		LOG.info("DENIED "+messageBase+" by default");
 		return AuthorizationResult.DENIED;
 	}
 	
