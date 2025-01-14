@@ -3,7 +3,7 @@ PLUGIN_VERSION=0.1.4
 KAFKA_VERSION=3.3.2
 KAFKA_SRC=kafka-$(KAFKA_VERSION)-src
 KAFKA_TARBALL_SUFFIX=.tgz
-KAFKA_DOWNLOAD_URL=https://downloads.apache.org/kafka/$(KAFKA_VERSION)/$(KAFKA_SRC)$(KAFKA_TARBALL_SUFFIX)
+KAFKA_DOWNLOAD_URL=https://archive.apache.org/dist/kafka/$(KAFKA_VERSION)/$(KAFKA_SRC)$(KAFKA_TARBALL_SUFFIX)
 
 POSTGRES_JDBC_VERSION=42.2.19
 POSTGRES_JAR=postgresql-$(POSTGRES_JDBC_VERSION).jar
@@ -33,16 +33,16 @@ deps :
 	mkdir deps
 
 deps/$(POSTGRES_JAR) : deps
-	cd deps && curl -LO $(POSTGRES_DOWNLOAD_URL)
+	cd deps && curl -LO --fail $(POSTGRES_DOWNLOAD_URL)
 
 deps/$(KAFKA_SRC) : deps/$(KAFKA_SRC)$(KAFKA_TARBALL_SUFFIX)
 	tar xzf deps/$(KAFKA_SRC)$(KAFKA_TARBALL_SUFFIX) -C deps
 
 deps/$(KAFKA_SRC)$(KAFKA_TARBALL_SUFFIX) : deps
-	cd deps && curl -LO $(KAFKA_DOWNLOAD_URL)
+	cd deps && curl -LO --fail $(KAFKA_DOWNLOAD_URL)
 
-deps/org.slf4j.jar : 
-	cd deps && curl -L $(SLF4J_DOWNLOAD_URL) -o $(SLF4J_JAR)
+deps/org.slf4j.jar : deps
+	cd deps && curl -L --fail $(SLF4J_DOWNLOAD_URL) -o $(SLF4J_JAR)
 
 build/ScimmaAuthPlugin.jar : build $(CLASSES)
 	cd build && jar cf ScimmaAuthPlugin.jar scimma
