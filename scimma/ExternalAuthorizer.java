@@ -50,7 +50,7 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 	private static String superUsersProp = "super.users";
 	///The prefix on all configuration entries specific to this class
 	private static String configPrefix="ExternalAuthorizer";
-	///The subsidiary prefix for database configuraation options for this class
+	///The subsidiary prefix for database configuration options for this class
 	private static String postgresConfigPrefix="postgres";
 	
 	///The set of all super users configured. 
@@ -60,7 +60,7 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 	///readable. 
 	private ConcurrentHashMap<String, Boolean> publicTopics;
 	///Map of user names to associated permissions. 
-	///This permits fast determiniation of whether the permissions for a given user are known, 
+	///This permits fast determination of whether the permissions for a given user are known, 
 	///and allows them to to be be concurrently updated (at user-level, not individual 
 	///permission-level granularity). 
 	private ConcurrentHashMap<String, HashSet<AclBinding>> ACLs;
@@ -185,7 +185,7 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 	}
 	
 	/**
-	 Dispatch a single authorization request to the function approriate for the subject type
+	 Dispatch a single authorization request to the function appropriate for the subject type
 	 */
 	private AuthorizationResult authorize(AuthorizableRequestContext requestContext, Action action){
 		switch(action.resourcePattern().resourceType()){
@@ -204,7 +204,7 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 	}
 	
 	/**
-	 Process an authorization request realting to a consumer group
+	 Process an authorization request relating to a consumer group
 	 @pre requestContext refers to a consumer group
 	 */
 	private AuthorizationResult authorizeConsumerGroupOperation(AuthorizableRequestContext requestContext, Action action){
@@ -250,7 +250,7 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 		String username=requestContext.principal().getName();
 		HashSet<AclBinding> userPerms=ACLs.get(username);
 		if(userPerms==null){
-			//try to fetch diectly from the database
+			//try to fetch directly from the database
 			try(ConnectionWrapper conn=dataSource.getConnection()){
 				gatherPermissions(conn, username);
 			}
@@ -306,17 +306,17 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 	
 	/**
 	 Look up whether a specific topic is publicly readable.
-	 @return Whather the topic is publicly readable, and false if the status could not be 
+	 @return Whether the topic is publicly readable, and false if the status could not be 
 	         definitely confirmed. 
 	 */
 	private boolean isTopicPubliclyReadable(String topic){
 		Boolean isPublic = publicTopics.get(topic);
 		if(isPublic==null){
-			//try to fetch diectly from the database
+			//try to fetch directly from the database
 			checkPublicTopic(topic);
 			isPublic = publicTopics.get(topic);
 			if(isPublic==null){ //if still null there's a database issue, so fail conservatively
-				LOG.warn("Treating "+topic+" as not publically readable due to lack of information");
+				LOG.warn("Treating "+topic+" as not publicly readable due to lack of information");
 				return false;
 			}
 		}
@@ -465,7 +465,7 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 			try(ResultSet rs = st.executeQuery()){
 				//make a new global map only if querying for all users
 				ConcurrentHashMap<String, HashSet<AclBinding>> updatedACLs=null;
-				//if querying for a single user, make just annew set of permissions for that user
+				//if querying for a single user, make just a new set of permissions for that user
 				HashSet<AclBinding> userPerms=null;
 				if(specificUser!=null)
 					userPerms=new HashSet<AclBinding>();
@@ -534,7 +534,7 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 	}
 	
 	/**
-	 Update cached public topic settng data. If communication with database fails, old cached data
+	 Update cached public topic setting data. If communication with database fails, old cached data
 	 is retained.
 	 @param specificTopic A single topic for which to look up the setting. 
 	                      If null, all topic settings will be looked up. 

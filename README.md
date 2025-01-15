@@ -49,7 +49,7 @@ To configure use of the authorization portion of the plugin, add:
 
 	authorizer.class.name=scimma.ExternalAuthorizer
 
-The settings for the authorizer are analogous to the autheticator:
+The settings for the authorizer are analogous to the authenticator:
 
 - `ExternalAuthorizer.postgres.host` - The PostgreSQL server. Defaults to 'localhost'.
 - `ExternalAuthorizer.postgres.database` - The name of the PostgreSQL database to which to connect. Defaults to 'scimma'
