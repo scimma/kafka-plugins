@@ -280,6 +280,14 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 			LOG.info("ALLOWED "+messageBase+" due to a match with an ALL permission rule");
 			return AuthorizationResult.ALLOWED;
 		}
+		//As a special case, we interpret WRITE permission as also granting DESCRIBE_CONFIGS
+		if(action.operation()==AclOperation.DESCRIBE_CONFIGS){
+			AccessControlEntry entryWrite = new AccessControlEntry("User:"+username,"*",AclOperation.WRITE,AclPermissionType.ALLOW);
+			if(userPerms.contains(new AclBinding(pattern, entryWrite))){
+				LOG.info("ALLOWED "+messageBase+" due to a match with a corresponding WRITE permission rule");
+				return AuthorizationResult.ALLOWED;
+			}
+		}
 		
 		//otherwise, we must deny
 		LOG.info("DENIED "+messageBase+" due to lack of a matching permission");
