@@ -7,6 +7,8 @@ import javax.security.auth.callback.PasswordCallback;
 import javax.security.auth.callback.UnsupportedCallbackException;
 import javax.security.auth.login.AppConfigurationEntry;
 import javax.security.sasl.AuthorizeCallback;
+import java.io.IOException;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -16,17 +18,16 @@ import java.util.concurrent.locks.Lock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.*;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import org.apache.kafka.common.KafkaException;
-import org.apache.kafka.common.config.SaslConfigs;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.security.auth.AuthenticateCallbackHandler;
 import org.apache.kafka.common.security.scram.ScramCredential;
 import org.apache.kafka.common.security.scram.ScramCredentialCallback;
 
-import scimma.ExternalDataSource;
-import scimma.ExternalDataSource.ConnectionWrapper;
+import scimma.RestClient;
 import scimma.PeriociallySyncable;
 import scimma.SyncThread;
 
@@ -38,37 +39,38 @@ public class ExternalScramAuthnCallbackHandler implements AuthenticateCallbackHa
 	
 	private String mechanism;
 	
-	private ExternalDataSource dataSource = null;
-	
 	///A cache of valid credentials obtained during or 
 	///since the last full synchronization with the database.
 	///This cache is replaced with each re-synchronization. 
-    private ConcurrentHashMap<String, ScramCredential> credentials;
+	private ConcurrentHashMap<String, ScramCredential> credentials;
 	///A cache of credentials which either did not exist or were found to be suspended during or
 	///since the last full synchronization with the database.
 	///This cache is cleared with each re-synchronization. 
-    private ConcurrentHashMap<String, Boolean> badUsernames;
+	private ConcurrentHashMap<String, Boolean> badUsernames;
 	
-    private SyncThread syncThread;
+	private SyncThread syncThread;
 	private int syncPeriod;
 	
 	private static String configPrefix="ExternalScramAuthnCallbackHandler";
-	private static String postgresConfigPrefix="postgres";
+	private String externalAPIRoot = "http://localhost";
+	private String externalAPIUsername = "KafkaAuth";
+	private String externalAPIPassword = null; //no default!
+	
+	private RestClient client = null;
 	
 	@Override
 	public void configure(Map<String, ?> configs, String saslMechanism, 
-                          List<AppConfigurationEntry> jaasConfigEntries){
-        this.mechanism = saslMechanism;
-        
-        credentials = new ConcurrentHashMap<String, ScramCredential>();
-        badUsernames = new ConcurrentHashMap<String, Boolean>();
+	                      List<AppConfigurationEntry> jaasConfigEntries){
+		this.mechanism = saslMechanism;
+		
+		credentials = new ConcurrentHashMap<String, ScramCredential>();
+		badUsernames = new ConcurrentHashMap<String, Boolean>();
 		
 		int waitTime = 300; //seconds = 5 minutes
 		
-        if(configs != null){
-            for(Map.Entry<String,?> option: configs.entrySet()){
+		if(configs != null){
+			for(Map.Entry<String,?> option: configs.entrySet()){
 				if(option.getKey().startsWith(configPrefix)){
-					
 					if(option.getKey().length()<=configPrefix.length()+1 || 
 					   option.getKey().charAt(configPrefix.length())!='.')
 						continue;
@@ -86,38 +88,43 @@ public class ExternalScramAuthnCallbackHandler implements AuthenticateCallbackHa
 							throw new IllegalArgumentException(message);
 						}
 					}
-					
+					else if(optionKey.equals("apiRoot") && option.getValue() instanceof String)
+						externalAPIRoot=(String)option.getValue();
+					else if(optionKey.equals("apiUsername") && option.getValue() instanceof String)
+						externalAPIUsername=(String)option.getValue();
+					else if(optionKey.equals("apiPassword") && option.getValue() instanceof String)
+						externalAPIPassword=(String)option.getValue();
 				}
-            }
-        }
+			}
+		}
 		
 		if(waitTime<1){
-			String message="Invalid database synchronization period "+Integer.toString(waitTime,10)+"; must be at least 1 second";
+			String message="Invalid data store synchronization period "+Integer.toString(waitTime,10)+"; must be at least 1 second";
 			LOG.error(message);
 			throw new IllegalArgumentException(message);
 		}
 		setSyncPeriod(waitTime);
 		
-		dataSource = new ExternalDataSource(configs, configPrefix+"."+postgresConfigPrefix);
-        
-        syncThread = new SyncThread(this);
-        syncThread.start();
+		//client=new RestClient(externalAPIRoot, externalAPIUsername, externalAPIPassword);
+		client=RestClient.clientForHost(externalAPIRoot, externalAPIUsername, externalAPIPassword);
+		
+		syncThread = new SyncThread(this);
+		syncThread.start();
 	}
 	
 	@Override
 	public void handle(Callback[] callbacks) throws UnsupportedCallbackException {
 		String username = null;
 		for (Callback callback : callbacks) {
-			if (callback instanceof NameCallback){
-                username = ((NameCallback) callback).getDefaultName();
-			}
+			if (callback instanceof NameCallback)
+				username = ((NameCallback) callback).getDefaultName();
 			else if (callback instanceof ScramCredentialCallback)
 				((ScramCredentialCallback) callback).scramCredential(credential(username));
 			else
 				throw new UnsupportedCallbackException(callback);
 		}
 	}
-    
+	
 	/**
 	 Look up the credential, if any, associated with a username. 
 	 Credentials will be returned from the cache when possible, to reduce traffic to the database.
@@ -127,22 +134,41 @@ public class ExternalScramAuthnCallbackHandler implements AuthenticateCallbackHa
 	protected ScramCredential credential(String username) {
 		// Return SCRAM credential from credential store
 		LOG.debug("Looking up credential for user "+username);
-        if(badUsernames.getOrDefault(username,false)){
-            LOG.info("User "+username+" is on the blacklist");
-            return null;
-        }
-        ScramCredential cred = credentials.get(username);
+		if(badUsernames.getOrDefault(username,false)){
+			LOG.info("User "+username+" is on the blacklist");
+			return null;
+		}
+		ScramCredential cred = credentials.get(username);
 		if(cred==null){
-            fetchCredentials(username);
+			fetchCredentials(username);
 			cred = credentials.get(username);
 		}
-        if(cred==null)
-            LOG.info("User "+username+" not found");
-        else
-            LOG.info("Found credential for user "+username);
+		if(cred==null)
+			LOG.info("User "+username+" not found");
+		else
+			LOG.info("Found credential for user "+username);
 		return cred;
 	}
-    
+	
+	protected static void updateDataWithCredential(ConcurrentHashMap<String, ScramCredential> updatedCredentials, ConcurrentHashMap<String, Boolean> updatedBadUsernames, JSONObject cred){
+		String username=cred.getString("username");
+		if(cred.getBoolean("suspended")){
+			//suspended credentials exist, but must be ignored
+			updatedBadUsernames.put(username, true);
+			updatedCredentials.remove(username);
+		}
+		else{
+			Base64.Decoder b64d=Base64.getDecoder();
+			byte[] salt = b64d.decode(cred.getString("salt"));
+			byte[] serverKey = b64d.decode(cred.getString("server_key"));
+			byte[] storedKey = b64d.decode(cred.getString("stored_key"));
+			int iterations = cred.getInt("iterations");
+			ScramCredential scred=new ScramCredential(salt,storedKey,serverKey,iterations);
+			updatedBadUsernames.remove(username);
+			updatedCredentials.put(username,scred);
+		}
+	}
+	
 	/**
 	 Make an immediate check with the database for credentials.
 	 This enables finding and authorizing credentials which are newly created since the last full 
@@ -152,67 +178,45 @@ public class ExternalScramAuthnCallbackHandler implements AuthenticateCallbackHa
 	                 If null, all credentials will be loaded and the caches completely replaced. 
 	 */
 	protected void fetchCredentials(String specificUser){
-		String query="SELECT username,salt,server_key,stored_key,iterations,suspended FROM hopskotch_auth_scramcredentials";
-		if(specificUser!=null){
-			query+=" WHERE username = ?";
-			LOG.debug("Looking up credential for user "+specificUser+" in the database");
-		}
-		try(ConnectionWrapper conn=dataSource.getConnection(); 
-			PreparedStatement st = conn.getConnection().prepareStatement(query);){
-			if(specificUser!=null){
-				//TODO: is any escaping or sanitization required, 
-				//      since username is data originating from the client?
-				st.setString(1, specificUser);
+		LOG.debug("Looking up credential for user "+specificUser+" from hopauth API");
+		try{
+			RestClient.JSON cred=client.request("/v1/scram_credentials/"+specificUser);
+			if(!cred.isObject()){
+				LOG.warn("API response was not an object");
+				return;
 			}
-            try(ResultSet rs = st.executeQuery()){
-				ConcurrentHashMap<String, ScramCredential> updatedCredentials;
-				ConcurrentHashMap<String, Boolean> updatedBadUsernames;
-				if(specificUser==null){ //create new cache structures
-					updatedCredentials = new ConcurrentHashMap<String, ScramCredential>();
-					updatedBadUsernames = new ConcurrentHashMap<String, Boolean>();
-				}
-				else{ //update existing caches
-					updatedCredentials = credentials;
-					updatedBadUsernames = badUsernames;
-				}
-				
-                if(rs.next()){
-					String username = rs.getString("username");
-                    byte[] salt = rs.getBytes("salt");
-                    byte[] serverKey = rs.getBytes("server_key");
-                    byte[] storedKey = rs.getBytes("stored_key");
-                    int iterations = rs.getInt("iterations");
-                    boolean suspended = rs.getBoolean("suspended");
-                    
-                    if(suspended) //suspended credentials exist, but must be ignored
-                        updatedBadUsernames.put(username, true);
-					else
-						updatedCredentials.put(username, new ScramCredential(salt,storedKey,serverKey,iterations));
-                }
-                else if(specificUser!=null){
-                    //add username to blacklist to prevent making many repeated requests to the DB
-                    badUsernames.put(specificUser, true);
-                }
-				
-				if(specificUser==null){
-					//swap out the entire credential cache for the new one
-					credentials = updatedCredentials;
-					//replace the bad username list so it contains only known suspended credentials
-					//this resets allowance for looking up as-yet-unknown users
-					badUsernames = updatedBadUsernames;
-				}
-            }
-            catch(SQLException ex){
-                LOG.warn("Failed to connect to database, lookup failed.\nSQL Error: "+ex.getMessage());
-				dataSource.markConnectionBad();
-            }
-        }
-        catch(SQLException ex){
-            LOG.warn("Failed to connect to database, lookup failed.\nSQL Error: "+ex.getMessage());
-			dataSource.markConnectionBad();
-        }
-    }
-    
+			//insert directly into current data structures
+			updateDataWithCredential(credentials, badUsernames, cred.getObject());
+		}
+		catch(IOException ex){
+			LOG.warn("Failed to connect to hopauth API, lookup failed:\n"+ex.getMessage());
+		}
+	}
+	
+	protected void fetchCredentials(){
+		LOG.debug("Looking up all credentials from hopauth API");
+		try{
+			ConcurrentHashMap<String, ScramCredential> updatedCredentials = new ConcurrentHashMap<String, ScramCredential>();
+			ConcurrentHashMap<String, Boolean> updatedBadUsernames = new ConcurrentHashMap<String, Boolean>();
+			RestClient.JSON creds=client.request("/v1/scram_credentials");
+			if(!creds.isArray()){
+				LOG.warn("API response was not a list");
+				return;
+			}
+			LOG.info("Got "+Integer.toString(creds.getArray().length())+" credential records from hopauth API");
+			for(int i=0; i<creds.getArray().length(); i++)
+				updateDataWithCredential(updatedCredentials, updatedBadUsernames, creds.getArray().getJSONObject(i));
+			//swap out the entire credential cache for the new one
+			credentials = updatedCredentials;
+			//replace the bad username list so it contains only known suspended credentials
+			//this resets allowance for looking up as-yet-unknown users
+			badUsernames = updatedBadUsernames;
+		}
+		catch(IOException ex){
+			LOG.warn("Failed to connect to hopauth API, lookup failed:\n"+ex.getMessage());
+		}
+	}
+	
 	/**
 	 Replace all cached credential data with a full dataset read from the database. 
 	 This overwrites the credentials and badUsernames cache, witht eh latter having 
@@ -220,9 +224,9 @@ public class ExternalScramAuthnCallbackHandler implements AuthenticateCallbackHa
 	 This should be invoked only by the Handler's background SyncThread. 
 	 */
 	public void update(){
-        LOG.debug("Synchronizing all credentials with the database");
-		fetchCredentials(null);
-    }
+		LOG.debug("Synchronizing all credentials with the database");
+		fetchCredentials();
+	}
 	
 	public int getSyncPeriod(){ return syncPeriod; }
 	public void setSyncPeriod(int period){
@@ -230,13 +234,13 @@ public class ExternalScramAuthnCallbackHandler implements AuthenticateCallbackHa
 			throw new IllegalArgumentException("Invalid synchronization period: "+Integer.toString(period,10));
 		syncPeriod=period;
 	}
-    
+	
 	@Override
-	public void close() {
+	public void close(){
 		if(syncThread!=null){
 			syncThread.end();
 			try{
-				//must join the sync thread before closing the database connection to ensure it is 
+				//Shut down sync thread
 				//no longer in use
 				LOG.debug("Sync thread joining");
 				syncThread.join();
@@ -246,13 +250,12 @@ public class ExternalScramAuthnCallbackHandler implements AuthenticateCallbackHa
 				LOG.debug("Sync thread interrupted");
 			}
 		}
-		if(dataSource!=null)
-			dataSource.close();
+		client.close();
 	}
 	
 	public static void main(String[] args){
 		//TODO: implement some tests?
 		ExternalScramAuthnCallbackHandler test = new ExternalScramAuthnCallbackHandler();
-        test.close();
+		test.close();
 	}
 }
