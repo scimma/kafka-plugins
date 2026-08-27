@@ -16,7 +16,7 @@ import javax.security.auth.login.AppConfigurationEntry;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.security.auth.AuthenticateCallbackHandler;
-import org.apache.kafka.common.security.oauthbearer.JwtValidatorException; //requires Kafka 4.1?
+//import org.apache.kafka.common.security.oauthbearer.JwtValidatorException; //requires Kafka 4.1?
 import org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule;
 import org.apache.kafka.common.security.oauthbearer.OAuthBearerToken;
 import org.apache.kafka.common.security.oauthbearer.OAuthBearerValidatorCallback;
@@ -147,7 +147,15 @@ public class TokenAuthnCallbackHandler implements AuthenticateCallbackHandler,Pe
 			new RefreshingHttpsJwksVerificationKeyResolver(new RefreshingHttpsJwks(
 				Time.SYSTEM, new HttpsJwks(issuer+"/.well-known/jwks.json"), jwksRefreshInterval*1000, jwksRefreshInterval*1000, jwksRefreshInterval*3*1000
 			));
-			keyResolver.configure(configs, saslMechanism, jaasConfigEntries);
+			//Required by Kafka 4
+			//keyResolver.configure(configs, saslMechanism, jaasConfigEntries);
+			//Required by Kafka 3
+			try{
+				keyResolver.init();
+			}
+			catch(IOException e){
+				throw new KafkaException(e);
+			}
 			keyResolvers.put(issuer, keyResolver);
 			
 			JwtConsumerBuilder consumerBuilder=new JwtConsumerBuilder();
@@ -326,20 +334,20 @@ public class TokenAuthnCallbackHandler implements AuthenticateCallbackHandler,Pe
 		keyResolvers = null;
 	}
 	
-// 	//JwtValidatorException seems to first appear in Kafka 4.1, so include a copy here for compatibility with 4.0
-// 	public class JwtValidatorException extends KafkaException {
-// 		public JwtValidatorException(String message) {
-// 			super(message);
-// 		}
-// 	
-// 		public JwtValidatorException(Throwable cause) {
-// 			super(cause);
-// 		}
-// 	
-// 		public JwtValidatorException(String message, Throwable cause) {
-// 			super(message, cause);
-// 		}
-// 	}
+	//JwtValidatorException seems to first appear in Kafka 4.1, so include a copy here for compatibility with 4.0
+	public class JwtValidatorException extends KafkaException {
+		public JwtValidatorException(String message) {
+			super(message);
+		}
+		
+		public JwtValidatorException(Throwable cause) {
+			super(cause);
+		}
+		
+		public JwtValidatorException(String message, Throwable cause) {
+			super(message, cause);
+		}
+	}
 	
 	protected void updateDataWithUserRecord(ConcurrentHashMap<String, String> updatedMapping, ConcurrentHashMap<String, Boolean> updatedBadUsernames, JSONObject record){
 		String source=record.getString(sourceProperty);

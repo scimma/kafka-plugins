@@ -4,7 +4,7 @@ endif
 
 PLUGIN_VERSION=0.2.0
 
-KAFKA_VERSION=4.2.1
+KAFKA_VERSION=3.9.2
 KAFKA_TARBALL=kafka_2.13-$(KAFKA_VERSION).tgz
 KAFKA_DOWNLOAD_URL=https://archive.apache.org/dist/kafka/$(KAFKA_VERSION)/$(KAFKA_TARBALL)
 KAFKA_JAR=kafka_2.13-$(KAFKA_VERSION)/libs/kafka-clients-$(KAFKA_VERSION).jar
