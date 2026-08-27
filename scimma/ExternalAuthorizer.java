@@ -2,6 +2,7 @@ package scimma;
 
 import org.apache.kafka.server.authorizer.Authorizer;
 
+import java.io.IOException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,10 +34,10 @@ import org.apache.kafka.server.authorizer.AuthorizerServerInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.*;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
-import scimma.ExternalDataSource;
-import scimma.ExternalDataSource.ConnectionWrapper;
+import scimma.RestClient;
 import scimma.PeriociallySyncable;
 import scimma.SyncThread;
 
@@ -50,8 +51,9 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 	private static String superUsersProp = "super.users";
 	///The prefix on all configuration entries specific to this class
 	private static String configPrefix="ExternalAuthorizer";
-	///The subsidiary prefix for database configuration options for this class
-	private static String postgresConfigPrefix="postgres";
+	private String externalAPIRoot = "http://localhost";
+	private String externalAPIUsername = "KafkaAuth";
+	private String externalAPIPassword = null; //no default!
 	
 	///The set of all super users configured. 
 	///Does not change after initial configuration, so concurrency-safe modification is not needed. 
@@ -65,27 +67,27 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 	///permission-level granularity). 
 	private ConcurrentHashMap<String, HashSet<AclBinding>> ACLs;
 	
-	private ExternalDataSource dataSource = null;
+	private RestClient client = null;
 	
 	private SyncThread syncThread;
 	private int syncPeriod = 300; //seconds
 	
 	///Translation between scimma-admin's database representation of Kafka operations and the 
 	///internal Kafka representation, since unfortunately they do not quite match. 
-	private static HashMap<Integer, AclOperation> operationMap = new HashMap<Integer,AclOperation>();
+	private static HashMap<String, AclOperation> operationMap = new HashMap<String,AclOperation>();
 	
 	static {
-		operationMap.put(1, AclOperation.ALL);
-		operationMap.put(2, AclOperation.READ);
-		operationMap.put(3, AclOperation.WRITE);
-		operationMap.put(4, AclOperation.CREATE);
-		operationMap.put(5, AclOperation.DELETE);
-		operationMap.put(6, AclOperation.ALTER);
-		operationMap.put(7, AclOperation.DESCRIBE);
-		operationMap.put(8, AclOperation.CLUSTER_ACTION);
-		operationMap.put(9, AclOperation.DESCRIBE_CONFIGS);
-		operationMap.put(10, AclOperation.ALTER_CONFIGS);
-		operationMap.put(11, AclOperation.IDEMPOTENT_WRITE);
+		operationMap.put("All", AclOperation.ALL);
+		operationMap.put("Read", AclOperation.READ);
+		operationMap.put("Write", AclOperation.WRITE);
+		operationMap.put("Create", AclOperation.CREATE);
+		operationMap.put("Delete", AclOperation.DELETE);
+		operationMap.put("Alter", AclOperation.ALTER);
+		operationMap.put("Describe", AclOperation.DESCRIBE);
+		operationMap.put("ClusterAction", AclOperation.CLUSTER_ACTION);
+		operationMap.put("DescribeConfigs", AclOperation.DESCRIBE_CONFIGS);
+		operationMap.put("AlterConfigs", AclOperation.ALTER_CONFIGS);
+		operationMap.put("IdempotentWrite", AclOperation.IDEMPOTENT_WRITE);
 	}
 	
 	public ExternalAuthorizer(){
@@ -130,6 +132,12 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 							throw new IllegalArgumentException(message);
 						}
 					}
+					else if(optionKey.equals("apiRoot") && option.getValue() instanceof String)
+						externalAPIRoot=(String)option.getValue();
+					else if(optionKey.equals("apiUsername") && option.getValue() instanceof String)
+						externalAPIUsername=(String)option.getValue();
+					else if(optionKey.equals("apiPassword") && option.getValue() instanceof String)
+						externalAPIPassword=(String)option.getValue();
 				}
 			}
 		}
@@ -141,7 +149,8 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 		}
 		setSyncPeriod(waitTime);
 		
-		dataSource = new ExternalDataSource(configs, configPrefix+"."+postgresConfigPrefix);
+		//client = new RestClient(externalAPIRoot, externalAPIUsername, externalAPIPassword);
+		client = RestClient.clientForHost(externalAPIRoot, externalAPIUsername, externalAPIPassword);
 		
 		syncThread = new SyncThread(this);
 		syncThread.start();
@@ -215,6 +224,10 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 		LOG.debug("ExternalAuthorizer asked to authorize "+messageBase);
 		//extract username
 		String username=requestContext.principal().getName();
+		//If the username has a "User:" prefix, denoting a user account rather than a SCRAM
+		//credential, ignore it for the purpose of checking consumer group names.
+		if(username.startsWith("User:") && username.length()>5)
+			username=username.substring(5);
 		String allowedPrefix=username+"-";
 		//figure out subject name
 		String subject=action.resourcePattern().name();
@@ -237,13 +250,14 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 			+" from "+requestContext.clientAddress().toString();
 		LOG.debug("ExternalAuthorizer asked to authorize "+messageBase);
 		String topic = action.resourcePattern().name();
+		//treat the system __consumer_offsets topic specially
+		if(topic.equals("__consumer_offsets")){
+			LOG.info("ALLOWED "+messageBase+" by hard-coded rule");
+			return AuthorizationResult.ALLOWED;
+		}
 		//if the action is a READ, and the subject is a public topic, we can authorize without needing to examine the principal
 		if(isTopicPubliclyReadable(topic) && (action.operation()==AclOperation.READ || action.operation()==AclOperation.DESCRIBE)){
 			LOG.info("ALLOWED "+messageBase+" due to the target being publicly readable");
-			return AuthorizationResult.ALLOWED;
-		}
-		if(topic.equals("__consumer_offsets")){
-			LOG.info("ALLOWED "+messageBase+" by hard-coded rule");
 			return AuthorizationResult.ALLOWED;
 		}
 		
@@ -251,14 +265,7 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 		HashSet<AclBinding> userPerms=ACLs.get(username);
 		if(userPerms==null){
 			//try to fetch directly from the database
-			try(ConnectionWrapper conn=dataSource.getConnection()){
-				gatherPermissions(conn, username);
-			}
-			catch(SQLException ex){
-				LOG.warn("Failed to connect to database, aborting sync.\nSQL Error: "+ex.getMessage());
-				LOG.info("DENIED "+messageBase+" due to lack of permission data");
-				return AuthorizationResult.DENIED;
-			}
+			gatherPermissions(username);
 			userPerms=ACLs.get(username);
 			if(userPerms==null){ //if still null there's a database issue, but we can't authorize
 				LOG.info("DENIED "+messageBase+" due to lack of permission data");
@@ -270,19 +277,19 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 		//we can directly check if the required permission exists in one of two forms, 
 		//namely the exact operation, or a blanket ALL permission
 		ResourcePattern pattern = new ResourcePattern(ResourceType.TOPIC, topic, PatternType.LITERAL);
-		AccessControlEntry entryExact = new AccessControlEntry("User:"+username,"*",action.operation(),AclPermissionType.ALLOW);
+		AccessControlEntry entryExact = new AccessControlEntry(username,"*",action.operation(),AclPermissionType.ALLOW);
 		if(userPerms.contains(new AclBinding(pattern, entryExact))){
 			LOG.info("ALLOWED "+messageBase+" due to an exact permission match");
 			return AuthorizationResult.ALLOWED;
 		}
-		AccessControlEntry entryGeneral = new AccessControlEntry("User:"+username,"*",AclOperation.ALL,AclPermissionType.ALLOW);
+		AccessControlEntry entryGeneral = new AccessControlEntry(username,"*",AclOperation.ALL,AclPermissionType.ALLOW);
 		if(userPerms.contains(new AclBinding(pattern, entryGeneral))){
 			LOG.info("ALLOWED "+messageBase+" due to a match with an ALL permission rule");
 			return AuthorizationResult.ALLOWED;
 		}
 		//As a special case, we interpret WRITE permission as also granting DESCRIBE_CONFIGS
 		if(action.operation()==AclOperation.DESCRIBE_CONFIGS){
-			AccessControlEntry entryWrite = new AccessControlEntry("User:"+username,"*",AclOperation.WRITE,AclPermissionType.ALLOW);
+			AccessControlEntry entryWrite = new AccessControlEntry(username,"*",AclOperation.WRITE,AclPermissionType.ALLOW);
 			if(userPerms.contains(new AclBinding(pattern, entryWrite))){
 				LOG.info("ALLOWED "+messageBase+" due to a match with a corresponding WRITE permission rule");
 				return AuthorizationResult.ALLOWED;
@@ -321,7 +328,7 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 		Boolean isPublic = publicTopics.get(topic);
 		if(isPublic==null){
 			//try to fetch directly from the database
-			checkPublicTopic(topic);
+			checkTopic(topic);
 			isPublic = publicTopics.get(topic);
 			if(isPublic==null){ //if still null there's a database issue, so fail conservatively
 				LOG.warn("Treating "+topic+" as not publicly readable due to lack of information");
@@ -433,12 +440,52 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 	 */
 	public void update(){
 		LOG.debug("Synchronizing all permissions with the database");
-		try(ConnectionWrapper conn=dataSource.getConnection()){
-			gatherPermissions(conn);
-			checkPublicTopics(conn, null);
+		gatherPermissions();
+		checkTopics();
+	}
+	
+	protected static void updateUserPermissionData(ConcurrentHashMap<String, HashSet<AclBinding>> updatedACLs, JSONObject perm, String usernameOverride){
+		String username=(usernameOverride!=null ? usernameOverride : perm.getString("principal"));
+		String topic=perm.getString("topic");
+		String operation=perm.getString("operation");
+		AclOperation kafkaOperation = operationMap.get(operation);
+		LOG.debug("Found permission for user "+username+" to perform operation "+kafkaOperation.toString()+" on topic "+topic);
+		ResourcePattern pattern=new ResourcePattern(ResourceType.TOPIC, topic, PatternType.LITERAL);
+		AccessControlEntry entry=new AccessControlEntry(username,"*",kafkaOperation,AclPermissionType.ALLOW);
+		
+		HashSet<AclBinding> userPerms=updatedACLs.get(username);
+		if(userPerms==null){
+			LOG.debug("   Creating new permission set for "+username);
+			userPerms=new HashSet<AclBinding>();
+			updatedACLs.put(username, userPerms);
 		}
-		catch(SQLException ex){
-			LOG.warn("Failed to connect to database, aborting sync.\nSQL Error: "+ex.getMessage());
+		userPerms.add(new AclBinding(pattern, entry));
+		
+		if(kafkaOperation!=AclOperation.ALL && kafkaOperation!=AclOperation.DESCRIBE){
+			LOG.debug("Added implicit permission for user "+username+" to DESCRIBE on topic "+topic);
+			entry=new AccessControlEntry(username,"*",AclOperation.DESCRIBE,AclPermissionType.ALLOW);
+			userPerms.add(new AclBinding(pattern, entry));
+		}
+		LOG.debug("    Permission set for "+username+" now has "+Integer.toString(userPerms.size())+" entries");
+	}
+	
+	private void gatherPermissions(String specificUser){
+		LOG.debug("Looking up ACL data for user "+specificUser+" from hopauth API");
+		try{
+			RestClient.JSON perms;
+			if(specificUser.startsWith("User:"))
+				perms=client.request("/v1/users/"+specificUser.substring(5)+"/available_permissions");
+			else //SCRAM credential identifiers do not have the "User:" prefix
+				perms=client.request("/v1/credential_permissions/"+specificUser);
+			if(!perms.isArray()){
+				LOG.warn("API response was not a list");
+				return;
+			}
+			for(int i=0; i<perms.getArray().length(); i++)
+				updateUserPermissionData(ACLs, perms.getArray().getJSONObject(i), specificUser);
+		}
+		catch(IOException ex){
+			LOG.warn("Failed to connect to hopauth API, ACL lookup failed:\n"+ex.getMessage());
 		}
 	}
 	
@@ -447,8 +494,35 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 	 previously used locally (permissions are fetched for all users). If communication with database 
 	 fails, old cached data is retained.   
 	 */
-	private void gatherPermissions(ConnectionWrapper conn){
-		gatherPermissions(conn, null);
+	private void gatherPermissions(){
+		LOG.debug("Looking up all ACL data from hopauth API");
+		try{
+			ConcurrentHashMap<String, HashSet<AclBinding>> updatedACLs=new ConcurrentHashMap<String, HashSet<AclBinding>>();
+			RestClient.JSON perms=client.request("/v1/credential_permissions");
+			if(!perms.isArray()){
+				LOG.warn("API response was not a list");
+				return;
+			}
+			LOG.debug("Got "+Integer.toString(perms.getArray().length())+" credential permission records from hopauth API");
+			for(int i=0; i<perms.getArray().length(); i++)
+				updateUserPermissionData(updatedACLs, perms.getArray().getJSONObject(i), null);
+			
+			perms=client.request("/v1/user_permissions");
+			if(!perms.isArray()){
+				LOG.warn("API response was not a list");
+				return;
+			}
+			LOG.debug("Got "+Integer.toString(perms.getArray().length())+" user permission records from hopauth API");
+			for(int i=0; i<perms.getArray().length(); i++){
+				JSONObject perm=perms.getArray().getJSONObject(i);
+				updateUserPermissionData(updatedACLs, perm, "User:"+perm.getString("principal"));
+			}
+			
+			ACLs=updatedACLs;
+		}
+		catch(IOException ex){
+			LOG.warn("Failed to connect to hopauth API, ACL lookup failed:\n"+ex.getMessage());
+		}
 	}
 	
 	/**
@@ -457,131 +531,43 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 	 @param specificUser A single user for which to look up permissions. 
 	                     If null, all user permissions will be loaded. 
 	 */
-	private void gatherPermissions(ConnectionWrapper conn, String specificUser){
-		String query="SELECT hopskotch_auth_credentialkafkapermission.operation,hopskotch_auth_scramcredentials.username,hopskotch_auth_kafkatopic.name "
-			+"FROM hopskotch_auth_credentialkafkapermission "
-			+"INNER JOIN hopskotch_auth_scramcredentials ON hopskotch_auth_credentialkafkapermission.principal_id=hopskotch_auth_scramcredentials.id "
-			+"INNER JOIN hopskotch_auth_kafkatopic ON hopskotch_auth_credentialkafkapermission.topic_id=hopskotch_auth_kafkatopic.id ";
-		if(specificUser!=null){
-            query+=" WHERE hopskotch_auth_scramcredentials.username=?";
-			LOG.debug("Querying database for permissions for user "+specificUser);
-		}
-		try(PreparedStatement st = conn.getConnection().prepareStatement(query);){
-			if(specificUser!=null)
-				st.setString(1, specificUser);
-			
-			try(ResultSet rs = st.executeQuery()){
-				//make a new global map only if querying for all users
-				ConcurrentHashMap<String, HashSet<AclBinding>> updatedACLs=null;
-				//if querying for a single user, make just a new set of permissions for that user
-				HashSet<AclBinding> userPerms=null;
-				if(specificUser!=null)
-					userPerms=new HashSet<AclBinding>();
-				else
-					updatedACLs=new ConcurrentHashMap<String, HashSet<AclBinding>>();
-				
-				while(rs.next()){
-					String username = "User:"+rs.getString("username");
-					String topic = rs.getString("name");
-					int operation = rs.getInt("operation");
-					AclOperation kafkaOperation = operationMap.get(operation);
-					LOG.debug("Found permission for user "+username+" to perform operation "+kafkaOperation.toString()+" on topic "+topic);
-					ResourcePattern pattern = new ResourcePattern(ResourceType.TOPIC, topic, PatternType.LITERAL);
-					AccessControlEntry entry = new AccessControlEntry(username,"*",kafkaOperation,AclPermissionType.ALLOW);
-					
-					//if gathering data for all users, insert into the new global map
-					//note that we continue to check user rather than userPerms in order to do the 
-					//right thing on subsequent iterations
-					if(specificUser==null){
-						userPerms=updatedACLs.get(username);
-						if(userPerms==null){
-							userPerms = new HashSet<AclBinding>();
-							updatedACLs.put(username, userPerms);
-						}
-					}
-					userPerms.add(new AclBinding(pattern, entry));
-					
-					if(kafkaOperation!=AclOperation.ALL && kafkaOperation!=AclOperation.DESCRIBE){
-						LOG.debug("Added implicit permission for user "+username+" to DESCRIBE on topic "+topic);
-						entry = new AccessControlEntry(username,"*",AclOperation.DESCRIBE,AclPermissionType.ALLOW);
-						userPerms.add(new AclBinding(pattern, entry));
-					}
-				}
-				
-				if(specificUser!=null) //if updating a single user, overwrite just that entry in the global map
-					ACLs.put(specificUser, userPerms);
-				else  //replace the whole global map
-					ACLs = updatedACLs;
-			}
-			catch(SQLException ex){
-				LOG.warn("Failed to connect to database, aborting sync.\nSQL Error: "+ex.getMessage());
-				dataSource.markConnectionBad();
+	
+	private void checkTopic(String specificTopic){
+		LOG.debug("Looking up topic metadata for "+specificTopic+" from hopauth API");
+		try{
+			RestClient.JSON data=client.request("/v1/topics/"+specificTopic);
+			if(!data.isObject()){
+				LOG.warn("API response was not an object");
 				return;
 			}
+			boolean isPublic=data.getObject().getBoolean("publicly_readable");
+			publicTopics.put(specificTopic, isPublic);
 		}
-		catch(SQLException ex){
-			LOG.warn("Failed to connect to database, aborting sync.\nSQL Error: "+ex.getMessage());
-			dataSource.markConnectionBad();
-			return;
+		catch(IOException ex){
+			LOG.warn("Failed to connect to hopauth API, topic lookup failed:\n"+ex.getMessage());
 		}
 	}
 	
-	/**
-	 Update cached public topic setting data. If communication with database fails, old cached data
-	 is retained.
-	 @param specificTopic A single topic for which to look up the setting. 
-	 */
-	private void checkPublicTopic(String specificTopic){
-		LOG.debug("Querying database for public status of "+specificTopic);
-		try(ConnectionWrapper conn=dataSource.getConnection()){
-			checkPublicTopics(conn, specificTopic);
-		}
-		catch(SQLException ex){
-			LOG.warn("Failed to connect to database, aborting sync.\nSQL Error: "+ex.getMessage());
-		}
-	}
-	
-	/**
-	 Update cached public topic setting data. If communication with database fails, old cached data
-	 is retained.
-	 @param specificTopic A single topic for which to look up the setting. 
-	                      If null, all topic settings will be looked up. 
-	 */
-	private void checkPublicTopics(ConnectionWrapper conn, String specificTopic){
-		String query="SELECT name,publicly_readable FROM hopskotch_auth_kafkatopic";
-		if(specificTopic!=null)
-			query+=" WHERE name = ?";
-		try(PreparedStatement st = conn.getConnection().prepareStatement(query);){
-			if(specificTopic!=null)
-				st.setString(1, specificTopic);
-			
-			try(ResultSet rs = st.executeQuery()){
-				ConcurrentHashMap<String, Boolean> updatedPublicTopics;
-				if(specificTopic==null) //create a new Map
-					updatedPublicTopics = new ConcurrentHashMap<String, Boolean>();
-				else //otherwise update the existing Map
-					updatedPublicTopics = publicTopics;
-				while(rs.next()){
-					String topic = rs.getString("name");
-					boolean publiclyReadable = rs.getBoolean("publicly_readable");
-					updatedPublicTopics.put(topic, publiclyReadable);
-					if(publiclyReadable)
-						LOG.debug("Topic "+topic+" is publicly readable");
-					else
-						LOG.debug("Topic "+topic+" is not publicly readable");
-				}
-				publicTopics = updatedPublicTopics;
-			}
-			catch(SQLException ex){
-				LOG.warn("Failed to connect to database, aborting sync.\nSQL Error: "+ex.getMessage());
-				dataSource.markConnectionBad();
+	private void checkTopics(){
+		LOG.debug("Looking up metadata for all topics from hopauth API");
+		try{
+			ConcurrentHashMap<String, Boolean> updatedPublicTopics=new ConcurrentHashMap<String, Boolean>();
+			RestClient.JSON data=client.request("/v1/topics");
+			if(!data.isArray()){
+				LOG.warn("API response was not an object");
 				return;
 			}
+			LOG.debug("Got "+Integer.toString(data.getArray().length())+" topic records from hopauth API");
+			for(int i=0; i<data.getArray().length(); i++){
+				JSONObject topicData=data.getArray().getJSONObject(i);
+				String topicName=topicData.getString("name");
+				boolean isPublic=topicData.getBoolean("publicly_readable");
+				updatedPublicTopics.put(topicName, isPublic);
+			}
+			publicTopics=updatedPublicTopics;
 		}
-		catch(SQLException ex){
-			LOG.warn("Failed to connect to database, aborting sync.\nSQL Error: "+ex.getMessage());
-			dataSource.markConnectionBad();
-			return;
+		catch(IOException ex){
+			LOG.warn("Failed to connect to hopauth API, topic lookup failed:\n"+ex.getMessage());
 		}
 	}
 	
@@ -607,7 +593,7 @@ public class ExternalAuthorizer implements Authorizer,PeriociallySyncable{
 				LOG.debug("Sync thread interrupted");
 			}
 		}
-		if(dataSource!=null)
-			dataSource.close();
+		if(client!=null)
+			client.close();
 	}
 }
