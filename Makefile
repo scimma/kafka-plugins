@@ -13,9 +13,9 @@ JOSE4J_VERSION=0.9.6
 # bundled with Kafka, no distinct download URL or tarball name
 JOSE4J_JAR=kafka_2.13-$(KAFKA_VERSION)/libs/jose4j-$(JOSE4J_VERSION).jar
 
-SLF4J_VERSION=2.0.18
-SLF4J_JAR=slf4j-api-$(SLF4J_VERSION).jar
-SLF4J_DOWNLOAD_URL=https://repo1.maven.org/maven2/org/slf4j/slf4j-api/$(SLF4J_VERSION)/slf4j-api-$(SLF4J_VERSION).jar
+SLF4J_VERSION=1.7.36
+# bundled with Kafka, no distinct download URL or tarball name
+SLF4J_JAR=kafka_2.13-$(KAFKA_VERSION)/libs/slf4j-api-$(SLF4J_VERSION).jar
 
 JSON_VERSION=20260522
 JSON_JAR=json-$(JSON_VERSION).jar
@@ -53,8 +53,9 @@ deps/$(JOSE4J_JAR) : deps/$(KAFKA_TARBALL)
 	tar xzf deps/$(KAFKA_TARBALL) -C deps $(JOSE4J_JAR)
 	test -f deps/$(JOSE4J_JAR) && touch deps/$(JOSE4J_JAR)
 
-deps/$(SLF4J_JAR) :
-	mkdir -p deps && cd deps && curl -L --fail $(SLF4J_DOWNLOAD_URL) -o $(SLF4J_JAR)
+deps/$(SLF4J_JAR) : deps/$(KAFKA_TARBALL)
+	tar xzf deps/$(KAFKA_TARBALL) -C deps $(SLF4J_JAR)
+	test -f deps/$(SLF4J_JAR) && touch deps/$(SLF4J_JAR)
 
 deps/$(JSON_JAR) :
 	mkdir -p deps && cd deps && curl -L --fail $(JSON_DOWNLOAD_URL) -o $(JSON_JAR)
