@@ -32,6 +32,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import org.jose4j.jwk.HttpsJwks;
@@ -70,7 +71,7 @@ public class TokenAuthnCallbackHandler implements AuthenticateCallbackHandler,Pe
 	private static final String SOURCE_PROPERTY_CONFIG=configPrefix+"source.property";
 	private static final String TARGET_PROPERTY_CONFIG=configPrefix+"target.property";
 	private static final String API_ROOT_CONFIG=configPrefix+"external.api.root";
-	private static final String API_USERNAME_CONFIG=configPrefix+"external.api.useranme";
+	private static final String API_USERNAME_CONFIG=configPrefix+"external.api.username";
 	private static final String API_PASSWORD_CONFIG=configPrefix+"external.api.password";
 	private static final String SYNC_PERIOD_CONFIG=configPrefix+"sync.period.seconds";
 	
@@ -120,7 +121,7 @@ public class TokenAuthnCallbackHandler implements AuthenticateCallbackHandler,Pe
 		if(!OAuthBearerLoginModule.OAUTHBEARER_MECHANISM.equals(saslMechanism))
 			log.warn("Expected OAUTHBEARER mechanism, got: {}", saslMechanism);
 		
-		//Same as BorkerJwtValidator
+		//Same as BrokerJwtValidator
 		ConfigurationUtils cu = new ConfigurationUtils(configs, saslMechanism);
 		Integer clockSkew=cu.validateInteger(SASL_OAUTHBEARER_CLOCK_SKEW_SECONDS, false);
 		scopeClaimName=cu.validateString(SASL_OAUTHBEARER_SCOPE_CLAIM_NAME);
@@ -128,9 +129,7 @@ public class TokenAuthnCallbackHandler implements AuthenticateCallbackHandler,Pe
 		
 		Map<String, Object> parsedConfigs = CONFIG_DEF.parse(configs);
 		trustedIssuers=new HashSet<String>((List<String>)parsedConfigs.get(TRUSTED_ISSUERS_CONFIG));
-		log.info("Number of trusted issuers: "+((Integer)trustedIssuers.size()).toString());
 		jwksCacheTtl=(Integer)parsedConfigs.get(JWKS_CACHE_TTL_CONFIG);
-		log.info("jwksCacheTtl: "+((Long)jwksCacheTtl).toString());
 		jwksRefreshInterval=(Integer)parsedConfigs.get(JWKS_CACHE_TTL_CONFIG);
 		
 		//All JWTs must use a non-trivial JWS algorithm and an issued time, 
@@ -143,10 +142,15 @@ public class TokenAuthnCallbackHandler implements AuthenticateCallbackHandler,Pe
 		keyResolvers=new HashMap<String, RefreshingHttpsJwksVerificationKeyResolver>();
 		jwtConsumers=new HashMap<String, JwtConsumer>();
 		for(String issuer : trustedIssuers){
-			RefreshingHttpsJwksVerificationKeyResolver keyResolver =
-			new RefreshingHttpsJwksVerificationKeyResolver(new RefreshingHttpsJwks(
-				Time.SYSTEM, new HttpsJwks(issuer+"/.well-known/jwks.json"), jwksRefreshInterval*1000, jwksRefreshInterval*1000, jwksRefreshInterval*3*1000
-			));
+			RefreshingHttpsJwksVerificationKeyResolver keyResolver;
+			try{
+				keyResolver = new RefreshingHttpsJwksVerificationKeyResolver(new RefreshingHttpsJwks(
+					Time.SYSTEM, new HttpsJwks(getIssuerJWKSURL(issuer)), jwksRefreshInterval*1000, jwksRefreshInterval*1000, jwksRefreshInterval*3*1000
+				));
+			}
+			catch(IOException e){
+				throw new KafkaException(e);
+			}
 			//Required by Kafka 4
 			//keyResolver.configure(configs, saslMechanism, jaasConfigEntries);
 			//Required by Kafka 3
@@ -403,5 +407,18 @@ public class TokenAuthnCallbackHandler implements AuthenticateCallbackHandler,Pe
 		if(period<0)
 			throw new IllegalArgumentException("Invalid synchronization period: "+Integer.toString(period,10));
 		syncPeriod=period;
+	}
+	
+	private String getIssuerJWKSURL(String issuerURL) throws IOException{
+		String oidcConfigURL=issuerURL+"/.well-known/openid-configuration";
+		RestClient.JSON data=RestClient.requestUnauthenticated(oidcConfigURL);
+		if(!data.isObject())
+			throw new IOException("OpenID configuration for "+issuerURL+" is not a JSON object");
+		try{
+			return data.getObject().getString("jwks_uri");
+		}
+		catch(JSONException ex){
+			throw new IOException("OpenID configuration for "+issuerURL+" does not contain a valid jwks_uri");
+		}
 	}
 }
