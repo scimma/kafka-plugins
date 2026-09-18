@@ -51,7 +51,7 @@ public class RestClient implements Closeable{
 	
 	private static ConcurrentHashMap<String, RestClient> clients = new ConcurrentHashMap<String, RestClient>();
 	
-	private class CallbackHandler implements javax.security.auth.callback.CallbackHandler{
+	private static class CallbackHandler implements javax.security.auth.callback.CallbackHandler{
 		private String username;
 		private String password;
 		
@@ -100,7 +100,7 @@ public class RestClient implements Closeable{
 		return result.toString();
 	}
 	
-	public class JSON{
+	public static class JSON{
 		public JSON(JSONArray a){
 			array=a;
 			object=null;
@@ -186,11 +186,11 @@ public class RestClient implements Closeable{
 			throw new IOException("Unsupported SCRAM mechanism: "+ex.getMessage());
 		}
 		catch(SaslException ex){
-			throw new IOException("SCRAM handshake failed, unable to get rEST token: "+ex.getMessage());
+			throw new IOException("SCRAM handshake failed, unable to get REST token: "+ex.getMessage());
 		}
 	}
 	
-	private HttpURLConnection connectionForURL(String rawURL) throws IOException{
+	private static HttpURLConnection connectionForURL(String rawURL) throws IOException{
 		URL url=null;
 		try{
 			url=new URI(rawURL).toURL();
@@ -205,6 +205,25 @@ public class RestClient implements Closeable{
 		return conn;
 	}
 	
+	private static JSON readJSONResponse(HttpURLConnection conn) throws IOException{
+		var tok=new JSONTokener(conn.getInputStream());
+		char first=tok.next();
+		tok.back(); //un-consume first character so it is available to other parsers
+		if(first=='{'){
+			return new JSON(new JSONObject(tok));
+		}
+		else if(first=='[')
+			return new JSON(new JSONArray(tok));
+		else{
+			int bufferSize = 1024;
+			char[] buffer = new char[bufferSize];
+			StringBuilder raw=new StringBuilder();
+			while(tok.more()) //this is very inefficient, but should be used rarely
+				raw.append(tok.next());
+			throw new IOException("Response body does not appear to be JSON: "+raw.toString());
+		}
+	}
+	
 	public JSON request(String path) throws IOException{
 		String curToken=getToken();
 		LOG.debug("Making GET request to "+externalAPIRoot+path+" with Authorization: "+curToken);
@@ -214,23 +233,21 @@ public class RestClient implements Closeable{
 		conn.setRequestProperty("Authorization", curToken);
 		conn.connect();
 		
-		if(conn.getResponseCode()>=200 && conn.getResponseCode()<=299){
-			var tok=new JSONTokener(conn.getInputStream());
-			char first=tok.next();
-			tok.back(); //un-consume first character so it is available to other parsers
-			if(first=='{')
-				return new JSON(new JSONObject(tok));
-			else if(first=='[')
-				return new JSON(new JSONArray(tok));
-			else{
-				int bufferSize = 1024;
-				char[] buffer = new char[bufferSize];
-				StringBuilder raw=new StringBuilder();
-				while(tok.more()) //this is very inefficient, but should be used rarely
-					raw.append(tok.next());
-				throw new IOException("Response body does not appear to be JSON: "+raw.toString());
-			}
-		}
+		if(conn.getResponseCode()>=200 && conn.getResponseCode()<=299)
+			return readJSONResponse(conn);
+		else
+			throw new IOException("Request failed with status "+
+			                      Integer.toString(conn.getResponseCode())+
+			                      ": "+conn.getResponseMessage());
+	}
+	
+	public static JSON requestUnauthenticated(String url) throws IOException{
+		HttpURLConnection conn=connectionForURL(url);
+		conn.setRequestMethod("GET");
+		conn.connect();
+		
+		if(conn.getResponseCode()>=200 && conn.getResponseCode()<=299)
+			return readJSONResponse(conn);
 		else
 			throw new IOException("Request failed with status "+
 			                      Integer.toString(conn.getResponseCode())+
