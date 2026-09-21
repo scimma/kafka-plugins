@@ -105,7 +105,6 @@ public class ExternalScramAuthnCallbackHandler implements AuthenticateCallbackHa
 		}
 		setSyncPeriod(waitTime);
 		
-		//client=new RestClient(externalAPIRoot, externalAPIUsername, externalAPIPassword);
 		client=RestClient.clientForHost(externalAPIRoot, externalAPIUsername, externalAPIPassword);
 		
 		syncThread = new SyncThread(this);

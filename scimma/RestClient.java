@@ -84,7 +84,13 @@ public class RestClient implements Closeable{
 	 * API host.
 	 */
 	public static RestClient clientForHost(String apiRoot, String apiUsername, String apiPassword){
-		return clients.computeIfAbsent(apiRoot, (k)->new RestClient(apiRoot, apiUsername, apiPassword));
+		//Combine username and url to prevent collisions if clients are needed for more than one
+		//username against the same URL.
+		//This could be done by inseting the username into the URL, but doing so would require real
+		//parsing, and might theoretically collide with some other username already embedded in the
+		//URL.
+		return clients.computeIfAbsent(apiUsername+":"+apiRoot, 
+		                               (k)->new RestClient(apiRoot, apiUsername, apiPassword));
 	}
 	
 	private static String stringFromStream(InputStream istream) throws IOException{
