@@ -141,6 +141,7 @@ public class RestClient implements Closeable{
 				HttpURLConnection conn=connectionForURL(externalAPIRoot+"/v1/scram/first");
 				conn.setRequestMethod("POST");
 				conn.setRequestProperty("Content-Type", "application/json");
+				conn.setRequestProperty("Accept", "application/json");
 				conn.setDoOutput(true);
 				
 				JSONObject firstRequestBody=new JSONObject().put("client_first", new String(clientFirst));
@@ -162,6 +163,7 @@ public class RestClient implements Closeable{
 				conn=connectionForURL(externalAPIRoot+"/v1/scram/final");
 				conn.setRequestMethod("POST");
 				conn.setRequestProperty("Content-Type", "application/json");
+				conn.setRequestProperty("Accept", "application/json");
 				conn.setDoOutput(true);
 				
 				JSONObject finalRequestBody=new JSONObject().put("client_final", new String(clientFinal))
@@ -237,6 +239,7 @@ public class RestClient implements Closeable{
 		HttpURLConnection conn=connectionForURL(externalAPIRoot+path);
 		conn.setRequestMethod("GET");
 		conn.setRequestProperty("Authorization", curToken);
+		conn.setRequestProperty("Accept", "application/json");
 		conn.connect();
 		
 		if(conn.getResponseCode()>=200 && conn.getResponseCode()<=299)
@@ -250,6 +253,7 @@ public class RestClient implements Closeable{
 	public static JSON requestUnauthenticated(String url) throws IOException{
 		HttpURLConnection conn=connectionForURL(url);
 		conn.setRequestMethod("GET");
+		conn.setRequestProperty("Accept", "application/json");
 		conn.connect();
 		
 		if(conn.getResponseCode()>=200 && conn.getResponseCode()<=299)
