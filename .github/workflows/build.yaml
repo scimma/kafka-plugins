@@ -9,7 +9,7 @@ jobs:
       uses: "actions/setup-java@v6"
       with:
         distribution: "redhat"
-        java-version: "25"
+        java-version: "21.0.8"
     - name: "Build"
       id: "build"
       run: "make"
