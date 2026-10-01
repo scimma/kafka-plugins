@@ -22,7 +22,7 @@ jobs:
       with:
         tag: ${{ steps.version.outputs.version }}
     - name: "Publish"
-      if: github.ref == "refs/heads/main" && steps.check-release.outputs.exists == 'false'
+      if: github.ref == 'refs/heads/main' && steps.check-release.outputs.exists == 'false'
       uses: "ncipollo/release-action@v1"
       with:
         name: ${{ steps.version.outputs.version }}
