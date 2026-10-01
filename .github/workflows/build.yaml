@@ -16,7 +16,13 @@ jobs:
     - name: "Version"
       id: "version"
       run: echo "::set-output name=version::$(make version)"
+    - name: "Check for Existing Release"
+      id: "check-release"
+      uses: mukunku/release-exists-action@v1.1.0
+      with:
+        tag: ${{ steps.version.outputs.version }}
     - name: "Publish"
+      if: github.ref == "refs/heads/main" && steps.check-release.outputs.exists == 'false'
       uses: "ncipollo/release-action@v1"
       with:
         name: ${{ steps.version.outputs.version }}
