@@ -29,7 +29,8 @@ DEPENDENCIES=deps/$(KAFKA_JAR) deps/$(SLF4J_JAR) deps/$(JSON_JAR) deps/$(JOSE4J_
 
 BUILD_CLASSPATH=.:deps/$(KAFKA_JAR):deps/$(SLF4J_JAR):deps/$(JOSE4J_JAR):deps/$(JSON_JAR)
 
-JAVAC_FLAGS=-Xlint:deprecation -Xlint:unchecked
+TARGET_JAVA_VERSION=17
+JAVAC_FLAGS=--release $(TARGET_JAVA_VERSION) -Xlint:deprecation -Xlint:unchecked
 #-Xlint:all
 
 
