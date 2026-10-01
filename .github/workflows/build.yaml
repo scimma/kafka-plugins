@@ -6,10 +6,10 @@ jobs:
     steps:
     - uses: "actions/checkout@v2"
     - name: "Set up java"
-      uses: "actions/setup-java@v2"
+      uses: "actions/setup-java@v6"
       with:
-        distribution: "adopt-hotspot"
-        java-version: "10"
+        distribution: "redhat"
+        java-version: "25"
     - name: "Build"
       id: "build"
       run: "make"
