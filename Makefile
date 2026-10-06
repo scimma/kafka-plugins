@@ -21,10 +21,6 @@ JSON_VERSION=20260522
 JSON_JAR=json-$(JSON_VERSION).jar
 JSON_DOWNLOAD_URL=https://repo1.maven.org/maven2/org/json/json/$(JSON_VERSION)/json-$(JSON_VERSION).jar
 
-NIMBUS_VERSION=10.8
-NIMBUS_JAR=com.nimbusds.nimbus-jose-jwt-$(NIMBUS_VERSION).jar
-NIMBUS_DOWNLOAD_URL=https://repo1.maven.org/maven2/com/nimbusds/nimbus-jose-jwt/$(NIMBUS_VERSION)/nimbus-jose-jwt-$(NIMBUS_VERSION).jar
-
 DEPENDENCIES=deps/$(KAFKA_JAR) deps/$(SLF4J_JAR) deps/$(JSON_JAR) deps/$(JOSE4J_JAR)
 
 BUILD_CLASSPATH=.:deps/$(KAFKA_JAR):deps/$(SLF4J_JAR):deps/$(JOSE4J_JAR):deps/$(JSON_JAR)
