@@ -166,6 +166,7 @@ public class TokenAuthnCallbackHandler implements AuthenticateCallbackHandler,Pe
 			consumerBuilder.setExpectedIssuer(issuer)
 				.setJwsAlgorithmConstraints(DISALLOW_NONE)
 				.setRequireIssuedAt()
+				.setSkipDefaultAudienceValidation()
 				.setVerificationKeyResolver(keyResolver);
 			if(clockSkew!=null)
 				consumerBuilder.setAllowedClockSkewInSeconds(clockSkew);
